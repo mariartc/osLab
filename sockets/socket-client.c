@@ -120,7 +120,11 @@ int main(int argc, char *argv[])
 				perror("read");
 				exit(1);
 			}
-			if(n == 0) break;  // server closed connection
+			if(n == 0){
+				break;  // server closed connection
+				if (close(sd) < 0)
+					perror("close");
+			}
 
 			fprintf(stderr, BLUE"");
 			if(strncmp(buf, "Wait for peer to connect.\n", 27) != 0 
