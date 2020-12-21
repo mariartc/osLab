@@ -15,7 +15,7 @@ CFLAGS += -g
 
 LIBS = 
 
-BINS = socket-server socket-client
+BINS = socket-server socket-client 
 
 all: $(BINS)
 

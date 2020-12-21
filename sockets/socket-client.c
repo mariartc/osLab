@@ -24,17 +24,16 @@
 #include "socket-common.h"
 
 /* Insist until all of the data has been written */
-ssize_t insist_write(int fd, const void *buf, size_t cnt)
-{
+ssize_t insist_write(int fd, const void *buf, size_t cnt){
 	ssize_t ret;
 	size_t orig_cnt = cnt;
 	
 	while (cnt > 0) {
-	        ret = write(fd, buf, cnt);
-	        if (ret < 0)
-	                return ret;
-	        buf += ret;
-	        cnt -= ret;
+		ret = write(fd, buf, cnt);
+		if (ret < 0)
+				return ret;
+		buf += ret;
+		cnt -= ret;
 	}
 
 	return orig_cnt;
@@ -61,7 +60,7 @@ int main(int argc, char *argv[])
 		perror("socket");
 		exit(1);
 	}
-	fprintf(stderr, "Created TCP socket\n");
+	fprintf(stderr, BLUE"Created TCP socket\n");
 	
 	/* Look up remote hostname on DNS */
 	if ( !(hp = gethostbyname(hostname))) {
@@ -78,19 +77,64 @@ int main(int argc, char *argv[])
 		perror("connect");
 		exit(1);
 	}
-	fprintf(stderr, "Connected.\n");
+	fprintf(stderr, "You are connected.\nType \"exit\" to shut the connection.\n\n"WHITE);
 
-	/* Be careful with buffer overruns, ensure NUL-termination */
-	strncpy(buf, HELLO_THERE, sizeof(buf));
-	buf[sizeof(buf) - 1] = '\0';
+	while(1){
+		fd_set inset;
+		int maxfd;
+		FD_ZERO(&inset);                 // initialization
+        FD_SET(STDIN_FILENO, &inset);   // select will check for input from stdin
+		FD_SET(sd, &inset);            // select will check for input from socket
+		
+		maxfd = MAX(STDIN_FILENO, sd) + 1;
 
-	/* Say something... */
-	if (insist_write(sd, buf, strlen(buf)) != strlen(buf)) {
-		perror("write");
-		exit(1);
+		int ready_fds = select(maxfd, &inset, NULL, NULL, NULL);
+		if (ready_fds <= 0) {
+				perror("select");
+				continue;        // try again
+		}
+
+		// input from stdin (user has typed something)
+        if (FD_ISSET(STDIN_FILENO, &inset)) {
+			/* Read from input and write it to socket */
+			n = read(STDIN_FILENO, buf, sizeof(buf));
+			if (n < 0) {
+				perror("read");
+				exit(1);
+			}
+
+			buf[sizeof(buf) - 1] = '\0';
+			if (strncmp(buf, "exit", 4) == 0) break;
+			if (insist_write(sd, buf, n) != n) {
+				perror("write");
+				exit(1);
+			}
+		}
+
+		// input from socket
+		if(FD_ISSET(sd, &inset)){
+			/* Read answer and write it to standard output */
+			n = read(sd, buf, sizeof(buf));
+
+			if (n < 0) {
+				perror("read");
+				exit(1);
+			}
+			if(n == 0) break;  // server closed connection
+
+			fprintf(stderr, BLUE"");
+			if(strncmp(buf, "Wait for peer to connect.\n", 27) != 0 
+						&& strncmp(buf, "Peer connected.\n", 17) != 0
+						&& strncmp(buf, "Peer left. Type exit to shut connection\n", 41) != 0) fprintf(stderr, GREEN"Peer says: ");
+			if (insist_write(0, buf, n) != n) {
+				perror("write");
+				exit(1);
+			}
+			fprintf(stderr, WHITE"");
+		}
 	}
-	fprintf(stdout, "I said:\n%s\nRemote says:\n", buf);
-	fflush(stdout);
+
+	fprintf(stderr, BLUE"\nConnection shut.\n"WHITE);
 
 	/*
 	 * Let the remote know we're not going to write anything else.
@@ -101,24 +145,5 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* Read answer and write it to standard output */
-	for (;;) {
-		n = read(sd, buf, sizeof(buf));
-
-		if (n < 0) {
-			perror("read");
-			exit(1);
-		}
-
-		if (n <= 0)
-			break;
-
-		if (insist_write(0, buf, n) != n) {
-			perror("write");
-			exit(1);
-		}
-	}
-
-	fprintf(stderr, "\nDone.\n");
 	return 0;
 }

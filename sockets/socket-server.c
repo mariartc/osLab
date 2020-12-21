@@ -24,8 +24,7 @@
 #include "socket-common.h"
 
 /* Convert a buffer to upercase */
-void toupper_buf(char *buf, size_t n)
-{
+void toupper_buf(char *buf, size_t n){
 	size_t i;
 
 	for (i = 0; i < n; i++)
@@ -33,15 +32,13 @@ void toupper_buf(char *buf, size_t n)
 }
 
 /* Insist until all of the data has been written */
-ssize_t insist_write(int fd, const void *buf, size_t cnt)
-{
+ssize_t insist_write(int fd, const void *buf, size_t cnt){
 	ssize_t ret;
 	size_t orig_cnt = cnt;
 	
 	while (cnt > 0) {
 	        ret = write(fd, buf, cnt);
-	        if (ret < 0)
-	                return ret;
+	        if (ret < 0) return ret;
 	        buf += ret;
 	        cnt -= ret;
 	}
@@ -53,7 +50,7 @@ int main(void)
 {
 	char buf[100];
 	char addrstr[INET_ADDRSTRLEN];
-	int sd, newsd;
+	int sd, client, client2, left = 0;
 	ssize_t n;
 	socklen_t len;
 	struct sockaddr_in sa;
@@ -85,13 +82,13 @@ int main(void)
 		exit(1);
 	}
 
-	/* Loop forever, accept()ing connections */
+	/* Loop forever, accept()ing connections until two clients connect */
 	for (;;) {
-		fprintf(stderr, "Waiting for an incoming connection...\n");
+		fprintf(stderr, "Waiting for two incoming connections...\n");
 
-		/* Accept an incoming connection */
+		/* Accept the first incoming connection */
 		len = sizeof(struct sockaddr_in);
-		if ((newsd = accept(sd, (struct sockaddr *)&sa, &len)) < 0) {
+		if ((client = accept(sd, (struct sockaddr *)&sa, &len)) < 0) {
 			perror("accept");
 			exit(1);
 		}
@@ -101,26 +98,116 @@ int main(void)
 		}
 		fprintf(stderr, "Incoming connection from %s:%d\n",
 			addrstr, ntohs(sa.sin_port));
+		sprintf(buf, "Wait for peer to connect.\n");
+		if (insist_write(client, buf, 27) != 27) {
+			perror("write to remote peer failed");
+		}
 
-		/* We break out of the loop when the remote peer goes away */
-		for (;;) {
-			n = read(newsd, buf, sizeof(buf));
-			if (n <= 0) {
-				if (n < 0)
-					perror("read from remote peer failed");
-				else
-					fprintf(stderr, "Peer went away\n");
-				break;
+		/* Accept the second incoming connection */
+		len = sizeof(struct sockaddr_in);
+		if ((client2 = accept(sd, (struct sockaddr *)&sa, &len)) < 0) {
+			perror("accept");
+			exit(1);
+		}
+		if (!inet_ntop(AF_INET, &sa.sin_addr, addrstr, sizeof(addrstr))) {
+			perror("could not format IP address");
+			exit(1);
+		}
+		fprintf(stderr, "Incoming connection from %s:%d\n",
+			addrstr, ntohs(sa.sin_port));
+		sprintf(buf, "Peer connected.\n");
+		if (insist_write(client, buf, 17) != 17) {
+			perror("write to remote peer failed");
+		}
+
+		/* Both clients connected. They communicate */
+		while(1){
+			fd_set inset;
+			int maxfd;
+			FD_ZERO(&inset);             // initialization
+			FD_SET(client, &inset);     // select will check for input from client's socket
+			FD_SET(client2, &inset);   // select will check for input from client2's socket
+			
+			maxfd = MAX(client, client2) + 1;
+
+			int ready_fds = select(maxfd, &inset, NULL, NULL, NULL);
+			if (ready_fds <= 0) {
+					perror("select");
+					continue;    // try again
 			}
-			toupper_buf(buf, n);
-			if (insist_write(newsd, buf, n) != n) {
-				perror("write to remote peer failed");
-				break;
+
+			// input from client
+			if (FD_ISSET(client, &inset)) {
+				n = read(client, buf, sizeof(buf));
+				if (n <= 0) {
+					if (n < 0)
+						perror("read from remote peer failed");
+					else{
+						fprintf(stderr, "Peer went away\n");
+						left = 1;
+						if (close(client) < 0)
+							perror("close");
+						break;
+					}
+				}
+				if (insist_write(client2, buf, n) != n) {
+					perror("write to remote peer failed");
+				}
+			}
+
+			// input from client2
+			if (FD_ISSET(client2, &inset)) {
+				n = read(client2, buf, sizeof(buf));
+				if (n <= 0) {
+					if (n < 0)
+						perror("read from remote peer failed");
+					else{
+						fprintf(stderr, "Peer went away\n");
+						left = 2;
+						if (close(client2) < 0)
+							perror("close");
+						break;
+					}
+				}
+				if (insist_write(client, buf, n) != n) {
+					perror("write to remote peer failed");
+				}
 			}
 		}
-		/* Make sure we don't leak open files */
-		if (close(newsd) < 0)
-			perror("close");
+		
+		/* One client disconnected */
+		if(left == 1){                                                  // First client left. Wait till first one leaves too
+			sprintf(buf, "Peer left. Type exit to shut connection\n"); // inform the second client
+			if (insist_write(client2, buf, 41) != 41) {
+				perror("write to remote peer failed");
+			}
+			while(1){                                              // while the second client stays connected
+				n = read(client2, buf, sizeof(buf));              // ignore what they write
+				if (n <= 0) {                                    // second client left
+					fprintf(stderr, "Peer went away\n");
+					if (close(client2) < 0){
+						perror("close");
+					}
+					break;
+				}
+			}
+		}
+		if(left == 2){                                                  // First client left. Wait till first one leaves too
+			sprintf(buf, "Peer left. Type exit to shut connection\n"); // inform the first client
+			if (insist_write(client, buf, 41) != 41) {
+				perror("write to remote peer failed");
+			}
+			while(1){                                             // while the first client stays connected
+				n = read(client, buf, sizeof(buf));              // ignore what they write
+				if (n <= 0) {                                   // first client left
+					fprintf(stderr, "Peer went away\n");
+					if (close(client) < 0){
+						perror("close");
+					}
+					break;
+				}
+			}
+		}
 	}
 
 	/* This will never happen */
