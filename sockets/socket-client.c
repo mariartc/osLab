@@ -47,6 +47,7 @@ int main(int argc, char *argv[])
 	char *hostname;
 	struct hostent *hp;
 	struct sockaddr_in sa;
+	int shutdownSocket = 1;
 
 	if (argc != 3) {
 		fprintf(stderr, "Usage: %s hostname port\n", argv[0]);
@@ -120,10 +121,11 @@ int main(int argc, char *argv[])
 				perror("read");
 				exit(1);
 			}
-			if(n == 0){
-				break;  // server closed connection
+			if(n == 0){  // server closed connection
 				if (close(sd) < 0)
 					perror("close");
+				shutdownSocket = 0;
+				break;
 			}
 
 			fprintf(stderr, BLUE"");
@@ -144,7 +146,7 @@ int main(int argc, char *argv[])
 	 * Let the remote know we're not going to write anything else.
 	 * Try removing the shutdown() call and see what happens.
 	 */
-	if (shutdown(sd, SHUT_WR) < 0) {
+	if (shutdownSocket && shutdown(sd, SHUT_WR) < 0) {
 		perror("shutdown");
 		exit(1);
 	}
