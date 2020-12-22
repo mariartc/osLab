@@ -48,7 +48,7 @@ ssize_t insist_write(int fd, const void *buf, size_t cnt){
 
 int main(void)
 {
-	char buf[100];
+	unsigned char buf[256];
 	char addrstr[INET_ADDRSTRLEN];
 	int sd, client, client2, left = 0;
 	ssize_t n;
@@ -98,7 +98,7 @@ int main(void)
 		}
 		fprintf(stderr, "Incoming connection from %s:%d\n",
 			addrstr, ntohs(sa.sin_port));
-		sprintf(buf, "Wait for peer to connect.\n");
+		sprintf((char *)buf, "Wait for peer to connect.\n");
 		if (insist_write(client, buf, 27) != 27) {
 			perror("write to remote peer failed");
 		}
@@ -115,7 +115,7 @@ int main(void)
 		}
 		fprintf(stderr, "Incoming connection from %s:%d\n",
 			addrstr, ntohs(sa.sin_port));
-		sprintf(buf, "Peer connected.\n");
+		sprintf((char *)buf, "Peer connected.\n");
 		if (insist_write(client, buf, 17) != 17) {
 			perror("write to remote peer failed");
 		}
@@ -177,7 +177,7 @@ int main(void)
 		
 		/* One client disconnected */
 		if(left == 1){                                                  // First client left. Wait till first one leaves too
-			sprintf(buf, "Peer left. Type exit to shut connection\n"); // inform the second client
+			sprintf((char *)buf, "Peer left. Type exit to shut connection\n"); // inform the second client
 			if (insist_write(client2, buf, 41) != 41) {
 				perror("write to remote peer failed");
 			}
@@ -193,7 +193,7 @@ int main(void)
 			}
 		}
 		if(left == 2){                                                  // First client left. Wait till first one leaves too
-			sprintf(buf, "Peer left. Type exit to shut connection\n"); // inform the first client
+			sprintf((char *)buf, "Peer left. Type exit to shut connection\n"); // inform the first client
 			if (insist_write(client, buf, 41) != 41) {
 				perror("write to remote peer failed");
 			}
@@ -213,4 +213,3 @@ int main(void)
 	/* This will never happen */
 	return 1;
 }
-

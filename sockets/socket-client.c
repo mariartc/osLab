@@ -21,7 +21,15 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <crypto/cryptodev.h>
+
 #include "socket-common.h"
+
+#define KEY_SIZE	16
+#define BLOCK_SIZE      16
 
 /* Insist until all of the data has been written */
 ssize_t insist_write(int fd, const void *buf, size_t cnt){
@@ -41,13 +49,16 @@ ssize_t insist_write(int fd, const void *buf, size_t cnt){
 
 int main(int argc, char *argv[])
 {
-	int sd, port;
+	int sd, port, crypto_fd;
 	ssize_t n;
-	char buf[100];
+	unsigned char buf[256], buf_out[256];
 	char *hostname;
 	struct hostent *hp;
 	struct sockaddr_in sa;
 	int shutdownSocket = 1;
+	unsigned char key[KEY_SIZE], iv[BLOCK_SIZE];
+	struct session_op sess;
+	struct crypt_op cryp;
 
 	if (argc != 3) {
 		fprintf(stderr, "Usage: %s hostname port\n", argv[0]);
@@ -80,6 +91,28 @@ int main(int argc, char *argv[])
 	}
 	fprintf(stderr, "You are connected.\nType \"exit\" to shut the connection.\n\n"WHITE);
 
+	// determine encryption key and initialization vector
+	sprintf((char *)key, "mariamarkosbffe");
+	sprintf((char *)iv, "mariamarkosbffe");
+	// open crypto device
+	crypto_fd = open("/dev/crypto", O_RDWR);
+	if (crypto_fd < 0) perror("open(/dev/crypto)");
+
+	memset(&sess, 0, sizeof(sess));
+	memset(&cryp, 0, sizeof(cryp));
+
+	// get crypto session
+	sess.cipher = CRYPTO_AES_CBC;
+	sess.keylen = KEY_SIZE;
+	sess.key = key;
+
+	if (ioctl(crypto_fd, CIOCGSESSION, &sess)) {
+		perror("ioctl(CIOCGSESSION)");
+		return 1;
+	}
+
+	//chat
+	memset(buf, 0, sizeof(buf));
 	while(1){
 		fd_set inset;
 		int maxfd;
@@ -98,6 +131,7 @@ int main(int argc, char *argv[])
 		// input from stdin (user has typed something)
         if (FD_ISSET(STDIN_FILENO, &inset)) {
 			/* Read from input and write it to socket */
+			memset(buf, 0, sizeof(buf)); //clear the buffer
 			n = read(STDIN_FILENO, buf, sizeof(buf));
 			if (n < 0) {
 				perror("read");
@@ -105,8 +139,25 @@ int main(int argc, char *argv[])
 			}
 
 			buf[sizeof(buf) - 1] = '\0';
-			if (strncmp(buf, "exit", 4) == 0) break;
-			if (insist_write(sd, buf, n) != n) {
+			if (memcmp(buf, "exit", 4) == 0) break;
+
+			/*
+			 * Encrypt buf to buf_out
+			 */
+			cryp.ses = sess.ses;
+			cryp.len = sizeof(buf);
+			cryp.src = buf;
+			cryp.dst = buf_out;
+			cryp.iv = iv;
+			cryp.op = COP_ENCRYPT;
+
+
+			if (ioctl(crypto_fd, CIOCCRYPT, &cryp)) {
+				perror("ioctl(CIOCCRYPT)");
+				return 1;
+			}
+
+			if (insist_write(sd, buf_out, 256) != 256) { // all 256 bytes contain the encrypted text
 				perror("write");
 				exit(1);
 			}
@@ -115,7 +166,9 @@ int main(int argc, char *argv[])
 		// input from socket
 		if(FD_ISSET(sd, &inset)){
 			/* Read answer and write it to standard output */
+			memset(buf, 0, sizeof(buf)); //clear the buffer
 			n = read(sd, buf, sizeof(buf));
+			memcpy(buf_out, buf, n); // copy buf to buf_out, in case the message is from server, therefor doesn't need decryption
 
 			if (n < 0) {
 				perror("read");
@@ -129,10 +182,25 @@ int main(int argc, char *argv[])
 			}
 
 			fprintf(stderr, BLUE"");
-			if(strncmp(buf, "Wait for peer to connect.\n", 27) != 0 
-						&& strncmp(buf, "Peer connected.\n", 17) != 0
-						&& strncmp(buf, "Peer left. Type exit to shut connection\n", 41) != 0) fprintf(stderr, GREEN"Peer says: ");
-			if (insist_write(0, buf, n) != n) {
+			if(memcmp(buf, "Wait for peer to connect.\n", 27) != 0 
+						&& memcmp(buf, "Peer connected.\n", 17) != 0
+						&& memcmp(buf, "Peer left. Type exit to shut connection\n", 41) != 0){
+				fprintf(stderr, GREEN"Peer says: ");
+				/*
+				 * Decrypt buf to buf_out
+				 */
+				cryp.ses = sess.ses;
+				cryp.len = sizeof(buf);
+				cryp.src = buf;
+				cryp.dst = buf_out;
+				cryp.iv = iv;
+				cryp.op = COP_DECRYPT;
+				if (ioctl(crypto_fd, CIOCCRYPT, &cryp)) {
+					perror("ioctl(CIOCCRYPT)");
+				return 1;
+				}
+			}
+			if (insist_write(0, buf_out, n) != n) {
 				perror("write");
 				exit(1);
 			}
@@ -150,6 +218,13 @@ int main(int argc, char *argv[])
 		perror("shutdown");
 		exit(1);
 	}
+	
+	/* Finish crypto session */
+	if (ioctl(crypto_fd, CIOCFSESSION, &sess.ses)) {
+		perror("ioctl(CIOCFSESSION)");
+		return 1;
+	}
+	if (close(crypto_fd) < 0) perror("close(fd)");
 
 	return 0;
 }
