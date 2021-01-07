@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	hostname = argv[1];
-	port = atoi(argv[2]); /* Needs better error checking */
+	port = atoi(argv[2]);
 
 	/* Create TCP/IP socket, used as main chat channel */
 	if ((sd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
