@@ -39,7 +39,7 @@ static struct crypto_device *get_crypto_dev_by_minor(unsigned int minor)
 
 	debug("Entering");
 
-	spin_lock_irqsave(&crdrvdata.lock, flags);
+	spin_lock_irqsave(&crdrvdata.lock, flags);         //crdrvdata is a global struct in module.c
 	list_for_each_entry(crdev, &crdrvdata.devs, list) {
 		if (crdev->minor == minor)
 			goto out;
@@ -63,10 +63,14 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 	int ret = 0;
 	int err;
 	unsigned int len;
-	struct crypto_open_file *crof;
+	struct crypto_open_file *crof; //crypto open file
 	struct crypto_device *crdev;
 	unsigned int *syscall_type;
 	int *host_fd;
+	struct scatterlist syscall_type_sg, host_fd_sg, *sgs[2];
+	unsigned int num_out = 0, num_in = 0;
+	struct virtqueue *vq = crdev->vq;
+	unsigned long flags;
 
 	debug("Entering");
 
@@ -101,15 +105,34 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 	 * We need two sg lists, one for syscall_type and one to get the 
 	 * file descriptor from the host.
 	 **/
+
+ 	//static inline void sg_init_one(struct scatterlist *sg, const void *buf, unsigned int buflen)
+	sg_init_one(&syscall_type_sg, syscall_type, sizeof(*syscall_type));
+	sgs[num_out++] = &syscall_type_sg;
+	g_init_one(&host_fd_sg, &(crof->host_fd), sizeof(crof->host_fd));
+	sgs[num_out + num_in++] = &host_fd_sg;
+
 	/* ?? */
+	spin_lock_irqsave(&crdev.lock, flags); //lock crypto device
+
+	//int virtqueue_add_sgs(struct virtqueue *vq, struct scatterlist *sgs[], unsigned int out_sgs, unsigned int in_sgs, void *data, gfp_t gfp);
+	err = virtqueue_add_sgs(vq, sgs, num_out, num_in, &syscall_type_sg, GFP_ATOMIC);
+	virtqueue_kick(vq);
 
 	/**
 	 * Wait for the host to process our data.
 	 **/
+	while (virtqueue_get_buf(vq, &len) == NULL); // do nothing while waiting
+
+	spin_unlock_irqrestore(&crdev.lock, flags); //unlock crypto device
 	/* ?? */
 
 
 	/* If host failed to open() return -ENODEV. */
+	if(host_fd < 0){
+		debug("Host failed to open(). Leaving");
+		return -ENODEV
+	}
 	/* ?? */
 		
 
@@ -120,24 +143,40 @@ fail:
 
 static int crypto_chrdev_release(struct inode *inode, struct file *filp)
 {
-	int ret = 0;
+	int ret = 0, err;
 	struct crypto_open_file *crof = filp->private_data;
 	struct crypto_device *crdev = crof->crdev;
 	unsigned int *syscall_type;
+	struct scatterlist syscall_type_sg, host_fd_sg, *sgs[2];
+	unsigned int num_out = 0, num_in = 0;
+	struct virtqueue *vq = crdev->vq;
+	unsigned long flags;
 
 	debug("Entering");
 
 	syscall_type = kzalloc(sizeof(*syscall_type), GFP_KERNEL);
 	*syscall_type = VIRTIO_CRYPTODEV_SYSCALL_CLOSE;
 
+	sg_init_one(&syscall_type_sg, syscall_type, sizeof(*syscall_type));
+	sgs[num_out++] = &syscall_type_sg;
+	g_init_one(&host_fd_sg, &(crof->host_fd), sizeof(crof->host_fd));
+	sgs[num_out++] = &host_fd_sg;
+
 	/**
 	 * Send data to the host.
 	 **/
+	spin_lock_irqsave(&crdev.lock, flags); //lock crypto device
+
+	err = virtqueue_add_sgs(vq, sgs, num_out, num_in, &syscall_type_sg, GFP_ATOMIC);
+	virtqueue_kick(vq);
 	/* ?? */
 
 	/**
 	 * Wait for the host to process our data.
 	 **/
+	while (virtqueue_get_buf(vq, &len) == NULL); // do nothing while waiting
+
+	spin_unlock_irqrestore(&crdev.lock, flags); //unlock crypto device
 	/* ?? */
 
 	kfree(crof);
@@ -160,6 +199,7 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 #define MSG_LEN 100
 	unsigned char *output_msg, *input_msg;
 	unsigned int *syscall_type;
+	unsigned long flags;
 
 	debug("Entering");
 
@@ -230,11 +270,13 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	 **/
 	/* ?? */
 	/* ?? Lock ?? */
+	spin_lock_irqsave(&crdev.lock, flags);
 	err = virtqueue_add_sgs(vq, sgs, num_out, num_in,
 	                        &syscall_type_sg, GFP_ATOMIC);
 	virtqueue_kick(vq);
 	while (virtqueue_get_buf(vq, &len) == NULL)
 		/* do nothing */;
+	spin_unlock_irqsave(&crdev.lock, flags);
 
 	debug("We said: '%s'", output_msg);
 	debug("Host answered: '%s'", input_msg);

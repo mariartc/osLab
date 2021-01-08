@@ -9,7 +9,7 @@
 #include "crypto-chrdev.h"
 #include "debug.h"
 
-struct crypto_driver_data crdrvdata;
+struct crypto_driver_data crdrvdata;  // struct "crypto_driver_data" is defined in crypto.h, its a struct with information about all crypto devices
 
 static void vq_has_data(struct virtqueue *vq)
 {
