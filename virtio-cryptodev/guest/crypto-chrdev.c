@@ -130,7 +130,7 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 
 
 	/* If host failed to open() return -ENODEV. */
-	if(host_fd < 0){
+	if(crof->host_fd < 0){
 		debug("Host failed to open(). Leaving");
 		return -ENODEV;
 	}
