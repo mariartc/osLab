@@ -37,7 +37,7 @@ struct crypto_device {
 
 	struct virtqueue *vq;
 	/* ?? Lock ?? */
-	spinlock_t lock
+	spinlock_t lock;
 
 	/* The minor number of the device. */
 	unsigned int minor;

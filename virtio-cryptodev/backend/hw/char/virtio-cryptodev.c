@@ -52,6 +52,7 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
 {
     VirtQueueElement *elem;
     unsigned int *syscall_type;
+    int *host_fd;
 
     DEBUG_IN();
 
@@ -68,15 +69,17 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
     case VIRTIO_CRYPTODEV_SYSCALL_TYPE_OPEN:
         DEBUG("VIRTIO_CRYPTODEV_SYSCALL_TYPE_OPEN");
         /* ?? */
-        int *host_fd = elem->in_sg[0].iov_base;
-        *host_fd = open("/dev/crypto");
+        host_fd = elem->in_sg[0].iov_base;
+        if ( (*host_fd = open("/dev/crypto", O_RDWR)) < 0 ){
+            DEBUG("error open file");
+        }
         DEBUG("I opened the file:)");
         break;
 
     case VIRTIO_CRYPTODEV_SYSCALL_TYPE_CLOSE:
         DEBUG("VIRTIO_CRYPTODEV_SYSCALL_TYPE_CLOSE");
         /* ?? */
-        int *host_fd = elem->out_sg[1].iov_base;
+        host_fd = elem->out_sg[1].iov_base;
         close(*host_fd);
         DEBUG("I closed the file:(");
         break;
@@ -84,11 +87,59 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
     case VIRTIO_CRYPTODEV_SYSCALL_TYPE_IOCTL:
         DEBUG("VIRTIO_CRYPTODEV_SYSCALL_TYPE_IOCTL");
         /* ?? */
-        unsigned char *output_msg = elem->out_sg[1].iov_base;
+        host_fd = elem->out_sg[1].iov_base;
+        unsigned int *cmd = elem->out_sg[2].iov_base;
+        unsigned char *output_msg = elem->out_sg[3].iov_base;
         unsigned char *input_msg = elem->in_sg[0].iov_base;
-        memcpy(input_msg, "Host: Welcome to the virtio World!", 35);
+        struct session_op *sess;
+        __u32 *ses;
+        struct crypt_op *crypt;
+
+        switch (*cmd) {
+            case CIOCGSESSION:
+                DEBUG("CIOCGSESSION");
+                sess = elem->in_sg[1].iov_base;
+
+                // if (ioctl(*host_fd, CIOCGSESSION, sess)) {
+                //     DEBUG("error ioctl(CIOCGSESSION)");
+                // }
+
+                memcpy(input_msg, "Host: Welcome to CIOCGSESSION!", 31);
+                break;
+
+            case CIOCFSESSION:
+                DEBUG("CIOCFSESSION");
+                ses = elem->in_sg[1].iov_base;
+
+                // if (ioctl(*host_fd, CIOCFSESSION, ses)) {
+                //     DEBUG("ioctl(CIOCFSESSION)");
+	            // }
+
+                memcpy(input_msg, "Host: Welcome to CIOCFSESSION!", 31);
+                break;
+
+            case CIOCCRYPT:
+                DEBUG("CIOCCRYPT");
+                crypt = elem->in_sg[1].iov_base;
+
+                // if (ioctl(*host_fd, CIOCCRYPT, crypt)) {
+                //     DEBUG("ioctl(CIOCCRYPT)");
+                // }
+
+                memcpy(input_msg, "Host: Welcome to CIOCCRYPT!", 28);
+                break;
+
+            default:
+                DEBUG("Unsupported ioctl command");
+
+                memcpy(input_msg, "Host: Welcome to not supported....", 35);
+
+                break;
+        }
+        
         printf("Guest says: %s\n", output_msg);
         printf("We say: %s\n", input_msg);
+
         break;
 
     default:
