@@ -92,8 +92,6 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         /* ?? */
         host_fd = elem->out_sg[1].iov_base;
         unsigned int *cmd = elem->out_sg[2].iov_base;
-        unsigned char *output_msg = elem->out_sg[3].iov_base;
-        unsigned char *input_msg = elem->in_sg[0].iov_base;
         struct session_op *sess;
         __u8 *key, *src, *dst, *iv;
         __u32 *ses;
@@ -106,37 +104,37 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         switch (*cmd) {
             case CIOCGSESSION:
                 DEBUG("CIOCGSESSION");
-                sess = elem->in_sg[1].iov_base;
-                key = elem->in_sg[2].iov_base;
-                host_return_val = elem->in_sg[3].iov_base;
+                sess = elem->in_sg[0].iov_base;
+                key = elem->in_sg[1].iov_base;
+                host_return_val = elem->in_sg[2].iov_base;
                 sess->key = key;
 
                 if ((*host_return_val = ioctl(*host_fd, CIOCGSESSION, sess))) {
                     DEBUG("error ioctl(CIOCGSESSION)");
                 }
 
-                memcpy(input_msg, "Host: Welcome to CIOCGSESSION!", 31);
+                DEBUG("CIOCGSESSION: Success");
                 break;
 
             case CIOCFSESSION:
                 DEBUG("CIOCFSESSION");
-                ses = elem->in_sg[1].iov_base;
-                host_return_val = elem->in_sg[2].iov_base;
+                ses = elem->in_sg[0].iov_base;
+                host_return_val = elem->in_sg[1].iov_base;
 
                 if ((*host_return_val = ioctl(*host_fd, CIOCFSESSION, ses))) {
                     DEBUG("ioctl(CIOCFSESSION)");
 	            }
 
-                memcpy(input_msg, "Host: Welcome to CIOCFSESSION!", 31);
+                DEBUG("CIOCFSESSION: Success");
                 break;
 
             case CIOCCRYPT:
                 DEBUG("CIOCCRYPT");
-                crypt = elem->in_sg[1].iov_base;
-                src = elem->in_sg[2].iov_base;
-                dst = elem->in_sg[3].iov_base;
-                iv = elem->in_sg[4].iov_base;
-                host_return_val = elem->in_sg[5].iov_base;
+                crypt = elem->in_sg[0].iov_base;
+                src = elem->in_sg[1].iov_base;
+                dst = elem->in_sg[2].iov_base;
+                iv = elem->in_sg[3].iov_base;
+                host_return_val = elem->in_sg[4].iov_base;
                 crypt->src = src;
                 crypt->dst = dst;
                 crypt->iv = iv;
@@ -145,20 +143,15 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
                     DEBUG("ioctl(CIOCCRYPT)");
                 }
 
-                memcpy(input_msg, "Host: Welcome to CIOCCRYPT!", 28);
+                DEBUG("CIOCCRYPT: Success");
                 break;
 
             default:
                 DEBUG("Unsupported ioctl command");
 
-                memcpy(input_msg, "Host: Welcome to not supported....", 35);
-
                 break;
         }
         
-        printf("Guest says: %s\n", output_msg);
-        printf("We say: %s\n", input_msg);
-
         break;
 
     default:
