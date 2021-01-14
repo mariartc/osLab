@@ -98,6 +98,7 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         __u8 *key, *src, *dst, *iv;
         __u32 *ses;
         struct crypt_op *crypt;
+        int *host_return_val;
 
         printf("Host fd = %d\n", *host_fd);
         printf("cmd = %u\n", *cmd);
@@ -107,9 +108,10 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
                 DEBUG("CIOCGSESSION");
                 sess = elem->in_sg[1].iov_base;
                 key = elem->in_sg[2].iov_base;
+                host_return_val = elem->in_sg[3].iov_base;
                 sess->key = key;
 
-                if (ioctl(*host_fd, CIOCGSESSION, sess)) {
+                if ((*host_return_val = ioctl(*host_fd, CIOCGSESSION, sess))) {
                     DEBUG("error ioctl(CIOCGSESSION)");
                 }
 
@@ -119,8 +121,9 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
             case CIOCFSESSION:
                 DEBUG("CIOCFSESSION");
                 ses = elem->in_sg[1].iov_base;
+                host_return_val = elem->in_sg[2].iov_base;
 
-                if (ioctl(*host_fd, CIOCFSESSION, ses)) {
+                if ((*host_return_val = ioctl(*host_fd, CIOCFSESSION, ses))) {
                     DEBUG("ioctl(CIOCFSESSION)");
 	            }
 
@@ -133,11 +136,12 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
                 src = elem->in_sg[2].iov_base;
                 dst = elem->in_sg[3].iov_base;
                 iv = elem->in_sg[4].iov_base;
+                host_return_val = elem->in_sg[5].iov_base;
                 crypt->src = src;
                 crypt->dst = dst;
                 crypt->iv = iv;
                 
-                if (ioctl(*host_fd, CIOCCRYPT, crypt)) {
+                if ((*host_return_val = ioctl(*host_fd, CIOCCRYPT, crypt))) {
                     DEBUG("ioctl(CIOCCRYPT)");
                 }
 

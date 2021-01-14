@@ -192,9 +192,10 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	struct crypto_open_file *crof = filp->private_data;
 	struct crypto_device *crdev = crof->crdev;
 	struct virtqueue *vq = crdev->vq;
-	struct scatterlist syscall_type_sg, output_msg_sg, input_msg_sg, host_fd_sg, cmd_sg, session_sg, sess_ses_sg, session_key_sg, crypt_sg, crypto_src_sg, crypto_dst_sg, crypto_iv_sg, *sgs[9];
+	struct scatterlist syscall_type_sg, output_msg_sg, input_msg_sg, host_fd_sg, cmd_sg, session_sg, sess_ses_sg, session_key_sg, crypt_sg, crypto_src_sg, crypto_dst_sg, crypto_iv_sg, host_return_val_sg, *sgs[10];
 	unsigned int num_out, num_in, len;
 #define MSG_LEN 100
+	int *host_return_val = NULL;
 	unsigned char *output_msg, *input_msg;
 	unsigned int *syscall_type, *ioctl_cmd = NULL;
 	unsigned long flags;
@@ -345,8 +346,9 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	}
 
-	sg_init_one(&session_key_sg, session_key, (copied_session->keylen)+1);
-	sgs[num_out + num_in++] = &session_key_sg;
+	host_return_val = kzalloc(sizeof(*host_return_val), GFP_KERNEL);
+	sg_init_one(&host_return_val_sg, host_return_val, sizeof(*host_return_val));
+	sgs[num_out + num_in++] = &host_return_val_sg;
 
 
 	/**
@@ -370,6 +372,10 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 			debug("Failed to copy_to_user (user_crypt->dst).");
 		}
 	}
+
+	ret = *host_return_val;
+	printk(KERN_DEBUG "*host_return_val: %d", *host_return_val);
+
 	spin_unlock_irqrestore(&crdev->lock, flags);
 
 	debug("We said: '%s'", output_msg);
@@ -398,6 +404,7 @@ fail:
 	kfree(input_msg);
 	kfree(syscall_type);
 	kfree(ioctl_cmd);
+	kfree(host_return_val);
 
 	debug("Leaving");
 
