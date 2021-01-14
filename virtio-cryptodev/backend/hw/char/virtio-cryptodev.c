@@ -59,6 +59,8 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
     elem = virtqueue_pop(vq, sizeof(VirtQueueElement));
     if (!elem) {
         DEBUG("No item to pop from VQ :(");
+        //virtqueue_push(vq, NULL, 0);
+        virtio_notify(vdev, vq);
         return;
     } 
 
@@ -74,6 +76,7 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
             DEBUG("error open file");
         }
         DEBUG("I opened the file:)");
+        printf("Host fd = %d\n", *host_fd);
         break;
 
     case VIRTIO_CRYPTODEV_SYSCALL_TYPE_CLOSE:
@@ -92,17 +95,23 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         unsigned char *output_msg = elem->out_sg[3].iov_base;
         unsigned char *input_msg = elem->in_sg[0].iov_base;
         struct session_op *sess;
+        __u8 *key, *src, *dst, *iv;
         __u32 *ses;
         struct crypt_op *crypt;
+
+        printf("Host fd = %d\n", *host_fd);
+        printf("cmd = %u\n", *cmd);
 
         switch (*cmd) {
             case CIOCGSESSION:
                 DEBUG("CIOCGSESSION");
                 sess = elem->in_sg[1].iov_base;
+                key = elem->in_sg[2].iov_base;
+                sess->key = key;
 
-                // if (ioctl(*host_fd, CIOCGSESSION, sess)) {
-                //     DEBUG("error ioctl(CIOCGSESSION)");
-                // }
+                if (ioctl(*host_fd, CIOCGSESSION, sess)) {
+                    DEBUG("error ioctl(CIOCGSESSION)");
+                }
 
                 memcpy(input_msg, "Host: Welcome to CIOCGSESSION!", 31);
                 break;
@@ -111,9 +120,9 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
                 DEBUG("CIOCFSESSION");
                 ses = elem->in_sg[1].iov_base;
 
-                // if (ioctl(*host_fd, CIOCFSESSION, ses)) {
-                //     DEBUG("ioctl(CIOCFSESSION)");
-	            // }
+                if (ioctl(*host_fd, CIOCFSESSION, ses)) {
+                    DEBUG("ioctl(CIOCFSESSION)");
+	            }
 
                 memcpy(input_msg, "Host: Welcome to CIOCFSESSION!", 31);
                 break;
@@ -121,10 +130,16 @@ static void vq_handle_output(VirtIODevice *vdev, VirtQueue *vq)
             case CIOCCRYPT:
                 DEBUG("CIOCCRYPT");
                 crypt = elem->in_sg[1].iov_base;
-
-                // if (ioctl(*host_fd, CIOCCRYPT, crypt)) {
-                //     DEBUG("ioctl(CIOCCRYPT)");
-                // }
+                src = elem->in_sg[2].iov_base;
+                dst = elem->in_sg[3].iov_base;
+                iv = elem->in_sg[4].iov_base;
+                crypt->src = src;
+                crypt->dst = dst;
+                crypt->iv = iv;
+                
+                if (ioctl(*host_fd, CIOCCRYPT, crypt)) {
+                    DEBUG("ioctl(CIOCCRYPT)");
+                }
 
                 memcpy(input_msg, "Host: Welcome to CIOCCRYPT!", 28);
                 break;

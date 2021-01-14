@@ -125,6 +125,8 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 	while (virtqueue_get_buf(vq, &len) == NULL); // do nothing while waiting
 
 	spin_unlock_irqrestore(&crdev->lock, flags); //unlock crypto device
+	
+	printk(KERN_DEBUG "host_fd line 129: %d", crof->host_fd);
 
 	/* If host failed to open() return -ENODEV. */
 	if(crof->host_fd < 0){
@@ -194,10 +196,10 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	unsigned int num_out, num_in, len;
 #define MSG_LEN 100
 	unsigned char *output_msg, *input_msg;
-	unsigned int *syscall_type;
+	unsigned int *syscall_type, *ioctl_cmd = NULL;
 	unsigned long flags;
-	struct session_op *user_session, copied_session;
-	struct crypt_op *user_crypt, copied_crypt;
+	struct session_op *user_session, *copied_session = NULL;
+	struct crypt_op *user_crypt, *copied_crypt = NULL;
 	__u8 *session_key = NULL, *crypto_src = NULL, *crypto_dst = NULL, *crypto_iv = NULL;
 	__u32 *user_sess_ses, *copied_sess_ses = NULL;
 
@@ -210,7 +212,9 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	input_msg = kzalloc(MSG_LEN, GFP_KERNEL);
 	syscall_type = kzalloc(sizeof(*syscall_type), GFP_KERNEL);
 	*syscall_type = VIRTIO_CRYPTODEV_SYSCALL_IOCTL;
-
+	ioctl_cmd = kzalloc(sizeof(*ioctl_cmd), GFP_KERNEL);
+	*ioctl_cmd = cmd;
+	
 	num_out = 0;
 	num_in = 0;
 
@@ -221,8 +225,16 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	sgs[num_out++] = &syscall_type_sg;
 	sg_init_one(&host_fd_sg, &(crof->host_fd), sizeof(crof->host_fd));
 	sgs[num_out++] = &host_fd_sg;
-	sg_init_one(&cmd_sg, &cmd, sizeof(cmd));
+	sg_init_one(&cmd_sg, ioctl_cmd, sizeof(*ioctl_cmd));
 	sgs[num_out++] = &cmd_sg;
+
+	printk(KERN_DEBUG "*ioctl_cmd: %u", *ioctl_cmd);
+	printk(KERN_DEBUG "cmd: %u", cmd);
+	printk(KERN_DEBUG "host_fd: %d", crof->host_fd);
+
+	// in order to avoid uninitialized error in `copy_to_user`
+	user_session = (struct session_op *)arg;
+	user_crypt = (struct crypt_op *)arg;
 
 	/**
 	 *  Add all the cmd specific sg lists.
@@ -239,28 +251,28 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 
 		user_session = (struct session_op *)arg;
 
-		if((ret = copy_from_user(&copied_session, user_session, sizeof(struct session_op)))) {
+		copied_session = kzalloc(sizeof(*copied_session), GFP_KERNEL);
+		if((ret = copy_from_user(copied_session, user_session, sizeof(*copied_session)))) {
 			debug("Failed to copy_from_user (copied_session).");
 			goto fail;
 		}
 
 		debug("after copy_from_user(&copied_session, user_session, sizeof(struct session_op))");
 
-		session_key = kzalloc(copied_session.keylen+1, GFP_KERNEL);
+		session_key = kzalloc((copied_session->keylen)+1, GFP_KERNEL);
 		if((ret = copy_from_user(session_key, user_session->key, (user_session->keylen)*sizeof(__u8)))){
 			debug("Failed to copy_from_user (session_key).");
 			goto fail;
 		}
-		session_key[copied_session.keylen]='\0'; // ensure null char at the end of session_key
-		// copied_session.key = session_key;
+		session_key[copied_session->keylen]='\0'; // ensure null char at the end of session_key
 
 		// we could also do the same for mackeylen - mackey, but we don't use it
 
-		sg_init_one(&session_sg, &copied_session, sizeof(struct session_op));
+		sg_init_one(&session_sg, copied_session, sizeof(*copied_session));
 		sgs[num_out + num_in++] = &session_sg;
 		debug("after sgs[num_out + num_in++] = &session_sg;");
-		// sg_init_one(&session_key_sg, session_key, copied_session.keylen+1);
-		// sgs[num_out + num_in++] = &session_key_sg;
+		sg_init_one(&session_key_sg, session_key, (copied_session->keylen)+1);
+		sgs[num_out + num_in++] = &session_key_sg;
 
 		break;
 
@@ -273,16 +285,16 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 		sg_init_one(&input_msg_sg, input_msg, MSG_LEN);
 		sgs[num_out + num_in++] = &input_msg_sg;
 
-		// user_sess_ses = (__u32 *)arg;
+		user_sess_ses = (__u32 *)arg;
 
-		// copied_sess_ses = kzalloc(sizeof(__u32), GFP_KERNEL);
-		// if((ret = copy_from_user(copied_sess_ses, user_sess_ses, sizeof(__u32)))){
-		// 	debug("Failed to copy_from_user (copied_sess_ses).");
-		// 	goto fail;
-		// }
+		copied_sess_ses = kzalloc(sizeof(*copied_sess_ses), GFP_KERNEL);
+		if((ret = copy_from_user(copied_sess_ses, user_sess_ses, sizeof(*copied_sess_ses)))){
+			debug("Failed to copy_from_user (copied_sess_ses).");
+			goto fail;
+		}
 
-		// sg_init_one(&sess_ses_sg, copied_sess_ses, sizeof(__u32));
-		// sgs[num_out + num_in++] = &sess_ses_sg;
+		sg_init_one(&sess_ses_sg, copied_sess_ses, sizeof(*copied_sess_ses));
+		sgs[num_out + num_in++] = &sess_ses_sg;
 
 		break;
 
@@ -295,38 +307,35 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 		sg_init_one(&input_msg_sg, input_msg, MSG_LEN);
 		sgs[num_out + num_in++] = &input_msg_sg;
 
-		// user_crypt = (struct crypt_op *)arg;
 
-		// if((ret = copy_from_user(&copied_crypt, user_crypt, sizeof(struct crypt_op)))) {
-		// 	debug("Failed to copy_from_user (copied_crypt).");
-		// 	goto fail;
-		// }
+		copied_crypt = kzalloc(sizeof(*copied_crypt), GFP_KERNEL);
+		if((ret = copy_from_user(copied_crypt, user_crypt, sizeof(*copied_crypt)))) {
+			debug("Failed to copy_from_user (copied_crypt).");
+			goto fail;
+		}
 
-		// crypto_src = kzalloc(copied_crypt.len * sizeof(__u8), GFP_KERNEL);
-		// if((ret = copy_from_user(crypto_src, user_crypt->src, copied_crypt.len * sizeof(__u8)))) {
-		// 	debug("Failed to copy_from_user (crypto_src).");
-		// 	goto fail;
-		// }
-		// copied_crypt.src = crypto_src;
+		crypto_src = kzalloc(copied_crypt->len * sizeof(__u8), GFP_KERNEL);
+		if((ret = copy_from_user(crypto_src, user_crypt->src, copied_crypt->len * sizeof(__u8)))) {
+			debug("Failed to copy_from_user (crypto_src).");
+			goto fail;
+		}
 
-		// crypto_dst = kzalloc(copied_crypt.len * sizeof(__u8), GFP_KERNEL);
-		// copied_crypt.dst = crypto_dst;
+		crypto_dst = kzalloc(copied_crypt->len * sizeof(__u8), GFP_KERNEL);
 
-		// crypto_iv = kzalloc(16 * sizeof(__u8), GFP_KERNEL);
-		// if((ret = copy_from_user(crypto_iv, user_crypt->iv, 16 * sizeof(__u8)))) {
-		// 	debug("Failed to copy_from_user (crypto_iv).");
-		// 	goto fail;
-		// }
-		// copied_crypt.iv = crypto_iv;
+		crypto_iv = kzalloc(16 * sizeof(__u8), GFP_KERNEL);
+		if((ret = copy_from_user(crypto_iv, user_crypt->iv, 16 * sizeof(__u8)))) {
+			debug("Failed to copy_from_user (crypto_iv).");
+			goto fail;
+		}
 
-		// sg_init_one(&crypt_sg, &copied_crypt, sizeof(struct crypt_op));
-		// sgs[num_out++] = &crypt_sg;
-		// sg_init_one(&crypto_src_sg, crypto_src, copied_crypt.len * sizeof(__u8));
-		// sgs[num_out++] = &crypto_src_sg;
-		// sg_init_one(&crypto_dst_sg, crypto_dst, copied_crypt.len * sizeof(__u8));
-		// sgs[num_out + num_in++] = &crypto_dst_sg;
-		// sg_init_one(&crypto_iv_sg, crypto_iv, 16 * sizeof(__u8));
-		// sgs[num_out++] = &crypto_iv_sg;
+		sg_init_one(&crypt_sg, copied_crypt, sizeof(*copied_crypt));
+		sgs[num_out + num_in++] = &crypt_sg;
+		sg_init_one(&crypto_src_sg, crypto_src, copied_crypt->len * sizeof(__u8));
+		sgs[num_out + num_in++] = &crypto_src_sg;
+		sg_init_one(&crypto_dst_sg, crypto_dst, copied_crypt->len * sizeof(__u8));
+		sgs[num_out + num_in++] = &crypto_dst_sg;
+		sg_init_one(&crypto_iv_sg, crypto_iv, 16 * sizeof(__u8));
+		sgs[num_out + num_in++] = &crypto_iv_sg;
 
 		break;
 
@@ -335,6 +344,9 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 
 		break;
 	}
+
+	sg_init_one(&session_key_sg, session_key, (copied_session->keylen)+1);
+	sgs[num_out + num_in++] = &session_key_sg;
 
 
 	/**
@@ -346,6 +358,18 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	virtqueue_kick(vq);
 	while (virtqueue_get_buf(vq, &len) == NULL)
 		/* do nothing */;
+
+	if(cmd == CIOCGSESSION) {
+		if((ret = copy_to_user(user_session, copied_session, sizeof(*copied_session)))) {
+			debug("Failed to copy_to_user (user_session).");
+		}
+	}
+
+	if(cmd == CIOCCRYPT) {
+		if((ret = copy_to_user(user_crypt->dst, crypto_dst, copied_crypt->len * sizeof(__u8)))) {
+			debug("Failed to copy_to_user (user_crypt->dst).");
+		}
+	}
 	spin_unlock_irqrestore(&crdev->lock, flags);
 
 	debug("We said: '%s'", output_msg);
@@ -354,6 +378,7 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 fail:
 	switch (cmd) {
 		case CIOCGSESSION:
+			kfree(copied_session);
 			kfree(session_key);
 			break;
 
@@ -362,6 +387,7 @@ fail:
 			break;
 
 		case CIOCCRYPT:
+			kfree(copied_crypt);
 			kfree(crypto_src);
 			kfree(crypto_dst);
 			kfree(crypto_iv);
@@ -371,6 +397,7 @@ fail:
 	kfree(output_msg);
 	kfree(input_msg);
 	kfree(syscall_type);
+	kfree(ioctl_cmd);
 
 	debug("Leaving");
 
