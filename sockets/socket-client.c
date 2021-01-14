@@ -95,8 +95,8 @@ int main(int argc, char *argv[])
 	sprintf((char *)key, "mariamarkosbffe");
 	sprintf((char *)iv, "mariamarkosbffe");
 	// open crypto device
-	crypto_fd = open("/dev/crypto", O_RDWR);
-	if (crypto_fd < 0) perror("open(/dev/crypto)");
+	crypto_fd = open("/dev/cryptodev0", O_RDWR);
+	if (crypto_fd < 0) perror("open(/dev/cryptodev0)");
 
 	memset(&sess, 0, sizeof(sess));
 	memset(&cryp, 0, sizeof(cryp));
