@@ -97,6 +97,8 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 		ret = -ENOMEM;
 		goto fail;
 	}
+	sema_init(&crdev->lock, 1); // initiallize semaphore
+
 	crof->crdev = crdev;
 	crof->host_fd = -1;
 	filp->private_data = crof;
@@ -113,7 +115,8 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 	sg_init_one(&host_fd_sg, &(crof->host_fd), sizeof(crof->host_fd));
 	sgs[num_out + num_in++] = &host_fd_sg;
 
-	spin_lock_irqsave(&crdev->lock, flags); //lock crypto device
+	if(down_interruptible(&crdev->lock)) //lock crypto device
+		return -ERESTARTSYS;
 
 	//int virtqueue_add_sgs(struct virtqueue *vq, struct scatterlist *sgs[], unsigned int out_sgs, unsigned int in_sgs, void *data, gfp_t gfp);
 	err = virtqueue_add_sgs(vq, sgs, num_out, num_in, &syscall_type_sg, GFP_ATOMIC);
@@ -124,7 +127,7 @@ static int crypto_chrdev_open(struct inode *inode, struct file *filp)
 	 **/
 	while (virtqueue_get_buf(vq, &len) == NULL); // do nothing while waiting
 
-	spin_unlock_irqrestore(&crdev->lock, flags); //unlock crypto device
+	up(&crdev->lock); //unlock crypto device
 	
 	printk(KERN_DEBUG "host_fd line 129: %d", crof->host_fd);
 
@@ -165,7 +168,8 @@ static int crypto_chrdev_release(struct inode *inode, struct file *filp)
 	/**
 	 * Send data to the host.
 	 **/
-	spin_lock_irqsave(&crdev->lock, flags); //lock crypto device
+	if(down_interruptible(&crdev->lock)) //lock crypto device
+		return -ERESTARTSYS;
 
 	err = virtqueue_add_sgs(vq, sgs, num_out, num_in, &syscall_type_sg, GFP_ATOMIC);
 	virtqueue_kick(vq);
@@ -175,7 +179,7 @@ static int crypto_chrdev_release(struct inode *inode, struct file *filp)
 	 **/
 	while (virtqueue_get_buf(vq, &len) == NULL); // do nothing while waiting
 
-	spin_unlock_irqrestore(&crdev->lock, flags); //unlock crypto device
+	up(&crdev->lock); //unlock crypto device
 
 	kfree(syscall_type);
 	kfree(crof);
@@ -354,7 +358,9 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	/**
 	 * Wait for the host to process our data.
 	 **/
-	spin_lock_irqsave(&crdev->lock, flags);
+	if(down_interruptible(&crdev->lock)) //lock crypto device
+		return -ERESTARTSYS;
+
 	err = virtqueue_add_sgs(vq, sgs, num_out, num_in,
 	                        &syscall_type_sg, GFP_ATOMIC);
 	virtqueue_kick(vq);
@@ -376,7 +382,7 @@ static long crypto_chrdev_ioctl(struct file *filp, unsigned int cmd,
 	ret = *host_return_val;
 	printk(KERN_DEBUG "*host_return_val: %d", *host_return_val);
 
-	spin_unlock_irqrestore(&crdev->lock, flags);
+	up(&crdev->lock); //unlock crypto device
 
 	debug("We said: '%s'", output_msg);
 	debug("Host answered: '%s'", input_msg);
