@@ -1,6 +1,8 @@
 # OSlab Exercise 3: Linux Chat over TCP/IP
 
-This project consists of 3 parts.
+This project was created by [Markos Baratsas](https://github.com/markosbaratsas) and [Maria Retsa](https://github.com/mariartc), for the purposes of the [Operationg Systems Laboratory](http://www.cslab.ece.ntua.gr/courses/compsyslab/) at [ECE NTUA](https://www.ece.ntua.gr/en).
+
+The project consists of 3 parts.
 
 ## Part 1 (unencrypted_chat): 
 Simple chat implementation in C language, using sockets.
